@@ -1,10 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
+﻿
+
+using System;
 using System.IO;
-using System.Linq;
 using System.Net;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace HttpNewsPAT_Kantuganov
 {
@@ -12,7 +10,7 @@ namespace HttpNewsPAT_Kantuganov
     {
         static void Main(string[] args)
         {
-            WebRequest request = new WebRequest.Create("");
+            WebRequest request = WebRequest.Create("https://59.ru/");
             HttpWebResponse response = (HttpWebResponse)request.GetResponse();
             Console.WriteLine(response.StatusDescription);
             Stream dataStream = response.GetResponseStream();
