@@ -1,10 +1,17 @@
 ﻿using HtmlAgilityPack;
 using System;
 using System.Diagnostics;
+using HtmlAgilityPack;
+using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Net;
 
 namespace HttpNewsPAT_Kantuganov
 {
@@ -12,9 +19,10 @@ namespace HttpNewsPAT_Kantuganov
     {
         static Cookie Token;
         static string logFilePath = "debug_trace.log";
-        static void Main(string[] args)
+        static HttpClient httpClient = new HttpClient();
+
+        static async Task Main(string[] args)
         {
-            WriteToLog("Начало работы");
 
             string siteUrl = "https://the-internet.herokuapp.com/secure";
 
@@ -51,20 +59,22 @@ namespace HttpNewsPAT_Kantuganov
                     loginUrl = siteUrl;
                 }
 
-                SingIn(loginUrl, login, password, loginField, passwordField);
+                await SingInAsync(loginUrl, login, password, loginField, passwordField);
             }
+
+            string pageContent = await GetContentAsync(siteUrl);
+
+            if (!string.IsNullOrEmpty(pageContent))
+            {
+                ParsingHtml(pageContent, siteUrl);
+            }
+
             Console.Write("\nДобавить эту страницу в базу новостей? (да/нет): ");
             string addToNews = Console.ReadLine().ToLower();
 
             if (addToNews == "да" || addToNews == "yes" || addToNews == "y" || addToNews == "д")
             {
-                AddNews(siteUrl);
-            }
-            string pageContent = GetContent(siteUrl);
-
-            if (!string.IsNullOrEmpty(pageContent))
-            {
-                ParsingHtml(pageContent, siteUrl);
+                await AddNewsAsync(siteUrl);
             }
 
             WriteToLog("Завершение");
@@ -74,111 +84,100 @@ namespace HttpNewsPAT_Kantuganov
             Console.ReadKey();
         }
 
-
-
-        public static void SingIn(string url, string login, string password, string loginField = "username", string passwordField = "password")
+        public static async Task SingInAsync(string url, string login, string password, string loginField = "username", string passwordField = "password")
         {
-            CookieContainer cookieContainer = new CookieContainer();
-
             WriteToLog($"Запрос: {url}");
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "POST";
-            request.ContentType = "application/x-www-form-urlencoded";
-            request.CookieContainer = cookieContainer;
-
-            string postData = $"{loginField}={Uri.EscapeDataString(login)}&{passwordField}={Uri.EscapeDataString(password)}";
-            byte[] data = Encoding.UTF8.GetBytes(postData);
-            request.ContentLength = data.Length;
-
-            using (Stream stream = request.GetRequestStream())
+            var content = new FormUrlEncodedContent(new[]
             {
-                stream.Write(data, 0, data.Length);
-            }
+                new KeyValuePair<string, string>(loginField, login),
+                new KeyValuePair<string, string>(passwordField, password)
+            });
 
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            {
-                WriteToLog($"Статус: {response.StatusCode}");
-
-                Uri uri = new Uri(url);
-                CookieCollection cookies = cookieContainer.GetCookies(uri);
-
-                if (cookies.Count > 0)
-                {
-                    Token = cookies[0];
-                }
-            }
-        }
-
-        public static void AddNews(string url)
-        {
             try
             {
-                WriteToLog($"Добавление новости: {url}");
+                var response = await httpClient.PostAsync(url, content);
 
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create("http://...");
-                request.Method = "POST";
-                request.ContentType = "application/x-www-form-urlencoded";
+                WriteToLog($"Статус: {response.StatusCode}");
 
-                string postData = $"url={Uri.EscapeDataString(url)}";
-                byte[] data = Encoding.UTF8.GetBytes(postData);
-                request.ContentLength = data.Length;
-
-                using (Stream stream = request.GetRequestStream())
+                if (response.Headers.TryGetValues("Set-Cookie", out var cookieHeaders))
                 {
-                    stream.Write(data, 0, data.Length);
-                }
-
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                {
-                    Console.WriteLine($"Статус добавления: {response.StatusCode}");
-                    WriteToLog($"Статус добавления: {response.StatusCode}");
-
-                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                    foreach (var cookieHeader in cookieHeaders)
                     {
-                        string result = reader.ReadToEnd();
-                        Console.WriteLine($"Результат: {result}");
+                        WriteToLog($"Cookie: {cookieHeader}");
                     }
                 }
+
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("Авторизация успешна");
+                }
             }
-            catch (WebException ex)
+            catch (Exception ex)
             {
-                Console.WriteLine($"Ошибка добавления: {ex.Message}");
-                WriteToLog($"Ошибка добавления: {ex.Message}");
+                Console.WriteLine($"Ошибка авторизации: {ex.Message}");
+                WriteToLog($"Ошибка авторизации: {ex.Message}");
             }
         }
 
-        public static string GetContent(string url)
+        public static async Task<string> GetContentAsync(string url)
         {
             WriteToLog($"Запрос страницы: {url}");
 
             try
             {
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 
-                if (Token != null)
+                var response = await httpClient.GetAsync(url);
+
+                WriteToLog($"Статус: {response.StatusCode}");
+
+                if (response.IsSuccessStatusCode)
                 {
-                    request.CookieContainer = new CookieContainer();
-                    request.CookieContainer.Add(Token);
+                    string content = await response.Content.ReadAsStringAsync();
+                    WriteToLog($"Символов: {content.Length}");
+                    return content;
                 }
-
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                else
                 {
-                    WriteToLog($"Статус: {response.StatusCode}");
-
-                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
-                    {
-                        string content = reader.ReadToEnd();
-                        WriteToLog($"Символов: {content.Length}");
-                        return content;
-                    }
+                    Console.WriteLine($"Ошибка: {response.StatusCode}");
+                    return null;
                 }
             }
-            catch (WebException ex)
+            catch (Exception ex)
             {
-                WriteToLog($"Ошибка: {ex.Message}");
                 Console.WriteLine($"Ошибка: {ex.Message}");
+                WriteToLog($"Ошибка: {ex.Message}");
                 return null;
+            }
+        }
+
+        public static async Task AddNewsAsync(string url)
+        {
+            WriteToLog($"Добавление новости: {url}");
+
+            try
+            {
+                var content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("url", url)
+                });
+
+                var response = await httpClient.PostAsync("http://news.permaviat.ru/add", content);
+
+                Console.WriteLine($"Статус добавления: {response.StatusCode}");
+                WriteToLog($"Статус добавления: {response.StatusCode}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    string result = await response.Content.ReadAsStringAsync();
+                    Console.WriteLine($"Результат: {result}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка добавления: {ex.Message}");
+                WriteToLog($"Ошибка добавления: {ex.Message}");
             }
         }
 
