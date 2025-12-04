@@ -1,12 +1,9 @@
-﻿
-
-using HtmlAgilityPack;
+﻿using HtmlAgilityPack;
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Security.Policy;
 using System.Text;
 
 namespace HttpNewsPAT_Kantuganov
@@ -17,47 +14,91 @@ namespace HttpNewsPAT_Kantuganov
         static string logFilePath = "debug_trace.log";
         static void Main(string[] args)
         {
-            SingIn("tomsmith", "SuperSecretPassword!");
-            if (Token != null)
-            {
-                string pageContent = GetContent("https://the-internet.herokuapp.com/secure");
-                Console.WriteLine("Содержимое страницы:");
-                ParsingHtml(pageContent);
-            }
-            if (File.Exists(logFilePath))
-            {
-                string logContent = File.ReadAllText(logFilePath);
-                Console.WriteLine(logContent);
-            }
-            Console.Read();
+            WriteToLog("Начало работы");
 
+            string siteUrl = "https://the-internet.herokuapp.com/secure";
+
+            Console.Write("Требуется авторизация? (да/нет): ");
+            string needAuth = Console.ReadLine().ToLower();
+
+            if (needAuth == "да")
+            {
+                Console.Write("Введите логин/email: ");
+                string login = Console.ReadLine();
+
+                Console.Write("Введите пароль: ");
+                string password = Console.ReadLine();
+
+                Console.Write("Введите поле для логина (username/email или Enter для 'username'): ");
+                string loginField = Console.ReadLine();
+                if (string.IsNullOrEmpty(loginField))
+                {
+                    loginField = "username";
+                }
+
+                Console.Write("Введите поле для пароля (Enter для 'password'): ");
+                string passwordField = Console.ReadLine();
+                if (string.IsNullOrEmpty(passwordField))
+                {
+                    passwordField = "password";
+                }
+
+                Console.Write("URL для логина (Enter для основного URL): ");
+                string loginUrl = Console.ReadLine();
+
+                if (string.IsNullOrEmpty(loginUrl))
+                {
+                    loginUrl = siteUrl;
+                }
+
+                SingIn(loginUrl, login, password, loginField, passwordField);
+            }
+            Console.Write("\nДобавить эту страницу в базу новостей? (да/нет): ");
+            string addToNews = Console.ReadLine().ToLower();
+
+            if (addToNews == "да" || addToNews == "yes" || addToNews == "y" || addToNews == "д")
+            {
+                AddNews(siteUrl);
+            }
+            string pageContent = GetContent(siteUrl);
+
+            if (!string.IsNullOrEmpty(pageContent))
+            {
+                ParsingHtml(pageContent, siteUrl);
+            }
+
+            WriteToLog("Завершение");
+
+            Console.WriteLine($"\nЛог сохранен: {logFilePath}");
+            Console.WriteLine("\nНажмите любую клавишу...");
+            Console.ReadKey();
         }
-        public static void SingIn(string username, string password)
+
+
+
+        public static void SingIn(string url, string login, string password, string loginField = "username", string passwordField = "password")
         {
             CookieContainer cookieContainer = new CookieContainer();
-            string url = "https://the-internet.herokuapp.com/authenticate";
 
-            WriteToLog($"Выполняем запрос: {url}");
-            WriteToLog($"Логин: {username}, Пароль: {new string('*', password.Length)}");
+            WriteToLog($"Запрос: {url}");
 
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "POST";
             request.ContentType = "application/x-www-form-urlencoded";
             request.CookieContainer = cookieContainer;
 
-            string postData = $"username={username}&password={password}";
-            byte[] data = Encoding.ASCII.GetBytes(postData);
+            string postData = $"{loginField}={Uri.EscapeDataString(login)}&{passwordField}={Uri.EscapeDataString(password)}";
+            byte[] data = Encoding.UTF8.GetBytes(postData);
             request.ContentLength = data.Length;
 
             using (Stream stream = request.GetRequestStream())
             {
                 stream.Write(data, 0, data.Length);
-                WriteToLog($"Отправлено данных: {data.Length} байт");
             }
 
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
             {
-                WriteToLog($"Статус ответа: {response.StatusCode}");
+                WriteToLog($"Статус: {response.StatusCode}");
 
                 Uri uri = new Uri(url);
                 CookieCollection cookies = cookieContainer.GetCookies(uri);
@@ -65,93 +106,154 @@ namespace HttpNewsPAT_Kantuganov
                 if (cookies.Count > 0)
                 {
                     Token = cookies[0];
-                    WriteToLog($"Получен токен: {Token.Name}={Token.Value}");
-                    WriteToLog($"Домен токена: {Token.Domain}, Путь: {Token.Path}");
                 }
-                else
+            }
+        }
+
+        public static void AddNews(string url)
+        {
+            try
+            {
+                WriteToLog($"Добавление новости: {url}");
+
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create("http://...");
+                request.Method = "POST";
+                request.ContentType = "application/x-www-form-urlencoded";
+
+                string postData = $"url={Uri.EscapeDataString(url)}";
+                byte[] data = Encoding.UTF8.GetBytes(postData);
+                request.ContentLength = data.Length;
+
+                using (Stream stream = request.GetRequestStream())
                 {
-                    WriteToLog("Токен не получен");
+                    stream.Write(data, 0, data.Length);
                 }
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                {
+                    Console.WriteLine($"Статус добавления: {response.StatusCode}");
+                    WriteToLog($"Статус добавления: {response.StatusCode}");
+
+                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        string result = reader.ReadToEnd();
+                        Console.WriteLine($"Результат: {result}");
+                    }
+                }
+            }
+            catch (WebException ex)
+            {
+                Console.WriteLine($"Ошибка добавления: {ex.Message}");
+                WriteToLog($"Ошибка добавления: {ex.Message}");
             }
         }
 
         public static string GetContent(string url)
         {
-            WriteToLog($"Запрос защищенной страницы: {url}");
+            WriteToLog($"Запрос страницы: {url}");
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.CookieContainer = new CookieContainer();
-            request.CookieContainer.Add(Token);
-
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            try
             {
-                WriteToLog($"Статус защищенной страницы: {response.StatusCode}");
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
 
-                using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                if (Token != null)
                 {
-                    string content = reader.ReadToEnd();
-                    WriteToLog($"Получено символов: {content.Length}");
-                    return content;
+                    request.CookieContainer = new CookieContainer();
+                    request.CookieContainer.Add(Token);
                 }
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                {
+                    WriteToLog($"Статус: {response.StatusCode}");
+
+                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        string content = reader.ReadToEnd();
+                        WriteToLog($"Символов: {content.Length}");
+                        return content;
+                    }
+                }
+            }
+            catch (WebException ex)
+            {
+                WriteToLog($"Ошибка: {ex.Message}");
+                Console.WriteLine($"Ошибка: {ex.Message}");
+                return null;
             }
         }
 
-        public static void ParsingHtml(string htmlCode)
+        public static void ParsingHtml(string htmlCode, string url)
         {
-            WriteToLog("Начало парсинга HTML");
+            WriteToLog($"Парсинг: {url}");
+
+            if (string.IsNullOrEmpty(htmlCode))
+            {
+                Console.WriteLine("HTML код пуст");
+                return;
+            }
 
             var html = new HtmlDocument();
             html.LoadHtml(htmlCode);
             var document = html.DocumentNode;
 
-            var exampleDivs = document.Descendants("div").Where(n => n.HasClass("example"));
-
-            WriteToLog($"Найдено элементов с классом 'example': {exampleDivs.Count()}");
-
-            foreach (HtmlNode div in exampleDivs)
+            var title = document.Descendants("title").FirstOrDefault();
+            if (title != null)
             {
-                var h2 = div.Descendants("h2").FirstOrDefault();
-                if (h2 != null)
-                {
-                    string header = h2.InnerText.Trim();
-                    Console.WriteLine("Заголовок: " + header);
-                    WriteToLog($"Парсинг: Заголовок = {header}");
-                }
-
-                var h4 = div.Descendants("h4").FirstOrDefault();
-                if (h4 != null)
-                {
-                    string text = h4.InnerText.Trim();
-                    Console.WriteLine("Текст: " + text);
-                    WriteToLog($"Парсинг: Текст = {text}");
-                }
-
-                var links = div.Descendants("a");
-                foreach (var link in links)
-                {
-                    var href = link.GetAttributeValue("href", "");
-                    var text = link.InnerText.Trim();
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        Console.WriteLine("Ссылка: " + text + " -> " + href);
-                        WriteToLog($"Парсинг: Ссылка {text} -> {href}");
-                    }
-                }
-
-                Console.WriteLine();
+                Console.WriteLine($"Заголовок: {title.InnerText.Trim()}");
             }
 
-            WriteToLog("Парсинг HTML завершен");
+            var headers = document.Descendants("h1")
+                .Concat(document.Descendants("h2"))
+                .Take(5);
+
+            foreach (var header in headers)
+            {
+                if (!string.IsNullOrWhiteSpace(header.InnerText))
+                {
+                    Console.WriteLine($"Заголовок: {header.InnerText.Trim()}");
+                }
+            }
+
+            var links = document.Descendants("a").Take(10);
+            foreach (var link in links)
+            {
+                var href = link.GetAttributeValue("href", "");
+                var text = link.InnerText.Trim();
+
+                if (!string.IsNullOrEmpty(text) && text.Length < 50)
+                {
+                    if (!string.IsNullOrEmpty(href) && !href.StartsWith("http"))
+                    {
+                        if (href.StartsWith("/"))
+                        {
+                            Uri baseUri = new Uri(url);
+                            href = new Uri(baseUri, href).ToString();
+                        }
+                    }
+
+                    Console.WriteLine($"Ссылка: {text} -> {href}");
+                }
+            }
+
+            var images = document.Descendants("img").Take(5);
+            foreach (var img in images)
+            {
+                var src = img.GetAttributeValue("src", "");
+                var alt = img.GetAttributeValue("alt", "");
+
+                if (!string.IsNullOrEmpty(src))
+                {
+                    Console.WriteLine($"Изображение: {alt} -> {src}");
+                }
+            }
         }
+
         public static void WriteToLog(string message)
         {
             try
             {
                 string logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
-
                 File.AppendAllText(logFilePath, logMessage + Environment.NewLine);
-
-                Debug.WriteLine(logMessage);
             }
             catch (Exception ex)
             {
