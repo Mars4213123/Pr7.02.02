@@ -4,22 +4,30 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Security.Policy;
 using System.Text;
 
 namespace HttpNewsPAT_Kantuganov
 {
     public class Program
     {
+        static Cookie Token;
         static void Main(string[] args)
         {
-            SingIn("emilys", "emilyspass");
+            SingIn("tomsmith", "SuperSecretPassword!");
+            if (Token != null)
+            {
+                string pageContent = GetContent("https://the-internet.herokuapp.com/secure");
+                Console.WriteLine("Содержимое страницы:");
+                Console.WriteLine(pageContent);
+            }
             Console.Read();
 
         }
         public static void SingIn(string username, string password)
         {
             CookieContainer cookieContainer = new CookieContainer();
-            string url = "https://dummyjson.com/auth/login";
+            string url = "https://the-internet.herokuapp.com/authenticate";
             Debug.WriteLine($"Выполняем запрос: {url}");
 
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
@@ -35,21 +43,25 @@ namespace HttpNewsPAT_Kantuganov
             {
                 stream.Write(data, 0, data.Length);
             }
-
-            using (HttpWebResponse responseCookieGeter = (HttpWebResponse)request.GetResponse()) {
-                Debug.WriteLine($"Статус выполнения: {responseCookieGeter.StatusCode}");
-                string cookieHeader = responseCookieGeter.Headers["Set-Cookie"]; ;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            {
 
                 Uri uri = new Uri(url);
                 CookieCollection cookies = cookieContainer.GetCookies(uri);
-
-                Console.WriteLine("COOKIES: ");
-                foreach (Cookie cookie in cookies)
-                {
-                    Console.WriteLine($"{cookie.Name}: \n{cookie.Value}");
-                }
+                Token = cookies[0];
             }
+        }
+        public static string GetContent(string url)
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.CookieContainer = new CookieContainer();
+            request.CookieContainer.Add(Token);
 
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+            {
+                return reader.ReadToEnd();
+            }
         }
     }
 }
