@@ -1,17 +1,12 @@
 ﻿using HtmlAgilityPack;
 using System;
-using System.Diagnostics;
-using HtmlAgilityPack;
-using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Net;
+using MySql.Data.MySqlClient;
 
 namespace HttpNewsPAT_Kantuganov
 {
@@ -21,10 +16,12 @@ namespace HttpNewsPAT_Kantuganov
         static string logFilePath = "debug_trace.log";
         static HttpClient httpClient = new HttpClient();
 
+
+        static string connectionPath = "Server=127.0.0.1;port=3306;Database=news;Uid=root;Pwd=;";
         static async Task Main(string[] args)
         {
 
-            string siteUrl = "https://the-internet.herokuapp.com/secure";
+            string siteUrl = "https://www.rbc.ru/?ysclid=miso5rvl29857274833";
 
             Console.Write("Требуется авторизация? (да/нет): ");
             string needAuth = Console.ReadLine().ToLower();
@@ -151,27 +148,31 @@ namespace HttpNewsPAT_Kantuganov
                 return null;
             }
         }
-
         public static async Task AddNewsAsync(string url)
         {
             WriteToLog($"Добавление новости: {url}");
-
             try
             {
-                var content = new FormUrlEncodedContent(new[]
+                string htmlCode = await GetContentAsync(url);
+                if (string.IsNullOrEmpty(htmlCode))
                 {
-                    new KeyValuePair<string, string>("url", url)
-                });
+                    Console.WriteLine("Не удалось получить контент страницы");
+                    return;
+                }
+                
+                var newsData = ParseNewsFromHtml(htmlCode, url);
 
-                var response = await httpClient.PostAsync("http://news.permaviat.ru/add", content);
-
-                Console.WriteLine($"Статус добавления: {response.StatusCode}");
-                WriteToLog($"Статус добавления: {response.StatusCode}");
-
-                if (response.IsSuccessStatusCode)
+                bool success = await InsertNewsToDatabase(newsData);
+                
+                if (success)
                 {
-                    string result = await response.Content.ReadAsStringAsync();
-                    Console.WriteLine($"Результат: {result}");
+                    Console.WriteLine("Новость успешно добавлена в базу данных");
+                    WriteToLog("Новость успешно добавлена в базу данных");
+                }
+                else
+                {
+                    Console.WriteLine("Не удалось добавить новость в базу данных");
+                    WriteToLog("Не удалось добавить новость в базу данных");
                 }
             }
             catch (Exception ex)
@@ -247,6 +248,142 @@ namespace HttpNewsPAT_Kantuganov
             }
         }
 
+        public static NewsData ParseNewsFromHtml(string htmlCode, string url)
+        {
+            var newsData = new NewsData();
+            var html = new HtmlDocument();
+            html.LoadHtml(htmlCode);
+            var document = html.DocumentNode;
+        
+            var title = document.Descendants("title").FirstOrDefault();
+            if (title != null)
+            {
+                newsData.Name = title.InnerText.Trim();
+            }
+            else
+            {
+                var h1 = document.Descendants("h1").FirstOrDefault();
+                if (h1 != null)
+                {
+                    newsData.Name = h1.InnerText.Trim();
+                }
+                else
+                {
+                    newsData.Name = "Без названия";
+                }
+            }
+        
+            var contentNodes = document.Descendants("article")
+                .Concat(document.Descendants("main"))
+                .Concat(document.Descendants("div")
+                    .Where(d => d.HasClass("content") || d.HasClass("post-content") || d.HasClass("article-content")))
+                .FirstOrDefault();
+        
+            if (contentNodes != null)
+            {
+                var paragraphs = contentNodes.Descendants("p").Select(p => p.InnerText.Trim());
+                newsData.Description = string.Join("\r\n\r\n", paragraphs.Take(5));
+        
+                if (string.IsNullOrEmpty(newsData.Description))
+                {
+                    newsData.Description = contentNodes.InnerText.Trim();
+                }
+            }
+            else
+            {
+                var paragraphs = document.Descendants("p").Select(p => p.InnerText.Trim());
+                newsData.Description = string.Join("\r\n\r\n", paragraphs.Take(3));
+            }
+        
+            if (newsData.Description.Length > 10000)
+            {
+                newsData.Description = newsData.Description.Substring(0, 9997) + "...";
+            }
+        
+            var images = document.Descendants("img")
+                .Where(img => !string.IsNullOrEmpty(img.GetAttributeValue("src", "")))
+                .ToList();
+        
+            if (images.Count > 0)
+            {
+                var mainImage = images.FirstOrDefault(img =>
+                    img.HasClass("featured") || img.HasClass("main") || img.HasClass("hero") ||
+                    img.HasClass("article-image") || img.HasClass("post-thumbnail"));
+        
+                if (mainImage != null)
+                {
+                    newsData.ImageUrl = mainImage.GetAttributeValue("src", "");
+                }
+                else
+                {
+                    newsData.ImageUrl = images[0].GetAttributeValue("src", "");
+                }
+        
+                if (!string.IsNullOrEmpty(newsData.ImageUrl) && !newsData.ImageUrl.StartsWith("http"))
+                {
+                    if (newsData.ImageUrl.StartsWith("/"))
+                    {
+                        Uri baseUri = new Uri(url);
+                        newsData.ImageUrl = new Uri(baseUri, newsData.ImageUrl).ToString();
+                    }
+                }
+            }
+        
+            if (string.IsNullOrEmpty(newsData.ImageUrl))
+            {
+                newsData.ImageUrl = "https://via.placeholder.com/300x200?text=No+Image";
+            }
+        
+            WriteToLog($"Парсинг новости: {newsData.Name}, Изображение: {newsData.ImageUrl}, Длина описания: {newsData.Description.Length}");
+        
+            return newsData;
+        }
+        
+        public static async Task<bool> InsertNewsToDatabase(NewsData news)
+        {
+            try
+            {
+                using (var connection = new MySqlConnection(connectionPath))
+                {
+                    await connection.OpenAsync();
+        
+                    int maxId = 0;
+                    string maxIdQuery = "SELECT MAX(id) FROM news";
+                    using (var maxIdCommand = new MySqlCommand(maxIdQuery, connection))
+                    {
+                        var result = await maxIdCommand.ExecuteScalarAsync();
+                        if (result != null && result != DBNull.Value)
+                        {
+                            maxId = Convert.ToInt32(result);
+                        }
+                    }
+        
+                    string insertQuery = @"
+                                INSERT INTO news (id, img, name, description) 
+                                VALUES (@id, @img, @name, @description)"
+                    ;
+        
+                    using (var command = new MySqlCommand(insertQuery, connection))
+                    {
+                        command.Parameters.AddWithValue("@id", maxId + 1);
+                        command.Parameters.AddWithValue("@img", news.ImageUrl);
+                        command.Parameters.AddWithValue("@name", news.Name);
+                        command.Parameters.AddWithValue("@description", news.Description);
+        
+                        int rowsAffected = await command.ExecuteNonQueryAsync();
+        
+                        return rowsAffected > 0;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при записи в БД: {ex.Message}");
+                WriteToLog($"Ошибка при записи в БД: {ex.Message}");
+                return false;
+            }
+        }
+        
         public static void WriteToLog(string message)
         {
             try
@@ -258,6 +395,12 @@ namespace HttpNewsPAT_Kantuganov
             {
                 Console.WriteLine($"Ошибка записи в лог: {ex.Message}");
             }
+        }
+        public class NewsData
+        {
+            public string ImageUrl { get; set; } = "";
+            public string Name { get; set; } = "";
+            public string Description { get; set; } = "";
         }
     }
 }
